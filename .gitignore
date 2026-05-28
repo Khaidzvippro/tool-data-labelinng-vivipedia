@@ -1,0 +1,10 @@
+chrome_profile/
+__pycache__/
+*.pyc
+debug_*.png
+debug_*.html
+debug_*.txt
+*.xlsx
+outputs/
+data/
+.env

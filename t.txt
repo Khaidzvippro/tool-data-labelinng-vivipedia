@@ -1,0 +1,23 @@
+﻿Title: Thanh to├ín chi ph├¡ dß╗▒ ├ín ODA theo Nghß╗ï ─æß╗ïnh 114/2021/N─É-CP
+Claims count: 7
+Headings: ['Thanh to├ín chi ph├¡ dß╗▒ ├ín ODA theo Nghß╗ï ─æß╗ïnh 114/2021/N─É-CP', '\ueb53', 'T├│m tß║»t nhanh', 'Hß╗ô s╞í cß║ºn chuß║⌐n bß╗ï', 'Quy tr├¼nh 3 b╞░ß╗¢c ├íp dß╗Ñng khung ph├íp l├╜ mß╗¢i']
+
+Ref URLs: 16
+ - https://portal.v-app.vn/apps/miniportal.vsf.wikicms/articles
+ - https://chinhphu.vn/?pageid=27160&docid=208944
+ - https://gdt.gov.vn/wps/portal/!ut/p/z0/lY6xTsMwFEV_BYaMlp9jJ67HqmFoSwVINCpeoufYSVOCk6huoX9PSBHqynTPke5wqKY7qj2emxpD03lsR3_TabF4WS_ydQ4AKolhuXnIs8d5Ck8M6Irquu3M9dochkHPqS47H9xXoLvahrtJfIjgiMXo057RG_Q32O-xH06XCK5ahH3n63CKIIaYR2CTEp0SMZHclkQwmxKDVUrSSgmsuJDSsJ-U29bZ9jkbWzcy3y4zgFf5r0LvPo9_ULjx0n1cphwWAUjyC8YwkzBLnHWCCF4ZglwKUlrGZ8oYVJWi_bs2SVvffwMqa6Wk/p0/IZ7_CQKCVKV0009520IMEVDLA60OH2=CZ6_CQKCVKV0009520IMEVDLA60O10=MECTX!QCPgdtQCAcontentQCPsa_gdtQCPsa_vanbanQCPsa_vanbanphapquyQCPvanban_thongtuQCP2023QCP8daf50de-cf9e-4cac-9b99-5045614590ec==/
+ - https://vdb.gov.vn/tin-tuc/15961/bo-tai-chinh-bai-bo-hai-thong-tu-quy-dinh-mot-so-dinh-muc-chi-tieu-ap-dung-cho-cac-du-an-chuong-trinh-su-dung-nguon-von-oda.aspx
+ - https://vanban.chinhphu.vn/he-thong-van-ban?classid=1&mode=1&typegroupid=6
+ - https://vdb.gov.vn/tin-tuc/15961/VanBan.aspx?Type=NHPT
+ - https://vbpl.moj.gov.vn/TW/Pages/vbpq-toanvan.aspx?ItemID=27296
+ - https://vbpl.moj.gov.vn/bothongtin/Pages/vbpq-luocdo.aspx?ItemID=163743
+ - https://pbgdpl.cantho.gov.vn/thong-tu-bai-bo-02-thong-tu-cua-bo-tai-chinh
+ - https://vbpl.moj.gov.vn/soctrang/Pages/vbpq-luocdo.aspx?ItemID=25025
+ - https://vbpl.moj.gov.vn/botaichinh/Pages/vbpq-luocdo.aspx?ItemID=27296
+ - https://vbpl.moj.gov.vn/bonoivu/Pages/vbpq-luocdo.aspx?ItemID=25025
+ - https://vbpl.moj.gov.vn/phuyen/Pages/vbpq-luocdo.aspx?ItemID=27296&Keyword=
+ - https://vbpl.moj.gov.vn/soctrang/Pages/vbpq-vanbanlienquan.aspx?ItemID=163743&Keyword=
+ - https://xaydungchinhsach.chinhphu.vn/bo-tai-chinh-bai-bo-7-thong-tu-lien-quan-den-su-dung-von-oda-huong-dan-cac-chuong-trinh-khcn-119231104093229367.htm
+ - https://portal.v-app.vn/
+
+Coverage: {'ok': True, 'warning': False, 'message': 'URL ─æß╗º: 16 URL / 7 claims Γ£ô'}
