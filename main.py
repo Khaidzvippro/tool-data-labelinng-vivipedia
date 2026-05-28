@@ -842,10 +842,12 @@ class App:
             try:
                 sys_p = build_system_prompt()
                 art_p = build_article_prompt(art, ref, detected)
+                fetch_urls = ref.get("urls", [])[:8]  # tối đa 8 URL gửi riêng để fetch
                 self._log(f"  System   : {len(sys_p)} ký tự")
                 self._log(f"  Article  : {len(art_p)} ký tự")
+                self._log(f"  URLs fetch: {len(fetch_urls)}")
 
-                raw = run_annotation_with_retry(sys_p, art_p, log_fn=self._log)
+                raw = run_annotation_with_retry(sys_p, art_p, urls=fetch_urls, log_fn=self._log)
             except RuntimeError as e:
                 # RuntimeError = lỗi setup (Chrome/CDP) — không retry
                 msg = str(e)

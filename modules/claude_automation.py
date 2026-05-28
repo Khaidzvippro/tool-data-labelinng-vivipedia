@@ -261,10 +261,45 @@ def _set_clipboard(text: str):
 
 
 
-def run_annotation(system_prompt: str, article_prompt: str, log_fn=print) -> str:
+def _send_urls_for_fetch(page, urls: list[str], log_fn=print):
+    """
+    Gửi từng URL riêng lẻ vào Claude để trigger web fetch tự động.
+    Claude.ai chỉ fetch URL khi URL đứng một mình trong message,
+    không fetch được khi URL nằm trong đoạn text dài.
+    """
+    if not urls:
+        return
+    log_fn(f"  Gửi {len(urls)} URL để Claude fetch...")
+    # Gửi tất cả URL trong 1 message, mỗi URL 1 dòng — Claude sẽ fetch lần lượt
+    url_msg = "\n".join(urls)
+    _set_clipboard(url_msg)
+    inp = _get_input_box(page)
+    inp.click()
+    time.sleep(0.2)
+    page.keyboard.press("Control+a")
+    time.sleep(0.1)
+    page.keyboard.press("Backspace")
+    time.sleep(0.1)
+    page.keyboard.press("Control+v")
+    time.sleep(2.0)  # Đợi Claude.ai parse và hiện URL preview card
+    page.keyboard.press("Space")
+    time.sleep(0.5)
+    _click_send(page, log_fn)
+    # Đợi Claude fetch xong — mỗi URL ~10-20s, dùng ack_mode
+    fetch_timeout = max(60, len(urls) * 20)
+    log_fn(f"  Đợi Claude fetch URLs (timeout {fetch_timeout}s)...")
+    r = _wait_response(page, timeout=fetch_timeout, log_fn=log_fn, ack_mode=True)
+    log_fn(f"  Fetch xong: {r[:120] if r else '(không lấy được text ack)'}")
+
+
+def run_annotation(system_prompt: str, article_prompt: str,
+                   urls: list[str] | None = None, log_fn=print) -> str:
     """
     Connect vào Chrome thật qua CDP (port 9222).
     Chrome phải đã mở claude.ai và đã login.
+
+    urls: danh sách URL cần fetch — gửi riêng trước article prompt
+          để Claude.ai trigger web fetch tự động.
     """
     with sync_playwright() as p:
         try:
@@ -278,7 +313,6 @@ def run_annotation(system_prompt: str, article_prompt: str, log_fn=print) -> str
 
         log_fn("Đã connect Chrome thật.")
 
-        # Lấy context và tab Claude
         contexts = browser.contexts
         if not contexts:
             raise RuntimeError("Chrome không có tab nào mở")
@@ -286,7 +320,6 @@ def run_annotation(system_prompt: str, article_prompt: str, log_fn=print) -> str
         ctx = contexts[0]
         pages = ctx.pages
 
-        # Tìm tab claude.ai hoặc tạo mới
         claude_page = None
         for pg in pages:
             if "claude.ai" in pg.url:
@@ -300,11 +333,9 @@ def run_annotation(system_prompt: str, article_prompt: str, log_fn=print) -> str
             time.sleep(4)
         else:
             log_fn(f"Dùng tab Claude: {claude_page.url}")
-            # Mở conversation mới
             claude_page.goto(CLAUDE_URL, wait_until="domcontentloaded", timeout=60000)
             time.sleep(3)
 
-        # Check vẫn login
         if "login" in claude_page.url or "auth" in claude_page.url:
             raise RuntimeError("Claude chưa login — hãy login trong Chrome rồi chạy lại")
 
@@ -313,26 +344,28 @@ def run_annotation(system_prompt: str, article_prompt: str, log_fn=print) -> str
         _send_text(claude_page, system_prompt, log_fn)
         _click_send(claude_page, log_fn)
 
-        # Đợi Claude ack — thường 10-20s, dùng ack_mode để lấy text thường (không cần JSON)
         r1 = _wait_response(claude_page, timeout=90, log_fn=log_fn, ack_mode=True)
         log_fn(f"Claude confirm: {r1[:100] if r1 else '(không lấy được text — tiếp tục)'}")
 
-        # === STEP 2: Article prompt ===
+        # === STEP 2: Gửi URL riêng để trigger web fetch ===
+        if urls:
+            _send_urls_for_fetch(claude_page, urls, log_fn)
+
+        # === STEP 3: Article prompt (không có URL — Claude đã đọc ở step 2) ===
         log_fn("Gửi dữ liệu bài viết...")
         _send_text(claude_page, article_prompt, log_fn)
         _click_send(claude_page, log_fn)
 
-        # Timeout dài vì Claude phải browse nhiều URL trước khi trả JSON
-        log_fn("Chờ Claude xử lý + browse URL...")
+        log_fn("Chờ Claude xử lý + trả JSON...")
         response = _wait_response(claude_page, timeout=300, log_fn=log_fn, ack_mode=False)
 
-        # Không đóng browser — Chrome thật vẫn chạy
         return response
 
 
 def run_annotation_with_retry(
     system_prompt: str,
     article_prompt: str,
+    urls: list[str] | None = None,
     log_fn=print,
     max_retries: int = 3,
 ) -> str:
@@ -340,7 +373,7 @@ def run_annotation_with_retry(
     last_err = None
     for attempt in range(1, max_retries + 1):
         try:
-            return run_annotation(system_prompt, article_prompt, log_fn)
+            return run_annotation(system_prompt, article_prompt, urls=urls, log_fn=log_fn)
         except RuntimeError:
             raise  # lỗi setup — không retry
         except Exception as e:
