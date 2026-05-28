@@ -18,8 +18,12 @@ _STATUS_NORMALIZE = {
 
 def extract_json(raw: str) -> dict:
     """
-    Extract JSON từ Claude response.
-    Thử nhiều strategy: raw parse → code block → first object.
+    Extract JSON từ Claude response — chịu được text thừa trước/sau.
+    Strategy theo thứ tự ưu tiên:
+      1. Parse trực tiếp
+      2. Lấy từ ```json ... ``` fence
+      3. Tìm { bắt đầu object đến } cuối cùng (balanced brace scan)
+      4. Greedy regex fallback
     """
     raw = raw.strip()
 
@@ -29,7 +33,7 @@ def extract_json(raw: str) -> dict:
     except json.JSONDecodeError:
         pass
 
-    # Strategy 2: extract từ ```json ... ``` hoặc ``` ... ```
+    # Strategy 2: code fence ```json ... ```
     match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", raw, re.DOTALL)
     if match:
         try:
@@ -37,7 +41,36 @@ def extract_json(raw: str) -> dict:
         except json.JSONDecodeError:
             pass
 
-    # Strategy 3: tìm JSON object đầu tiên (greedy — handle nested)
+    # Strategy 3: balanced brace scan — tìm { đầu tiên rồi đếm brace đến khi balanced
+    start = raw.find("{")
+    if start != -1:
+        depth = 0
+        in_string = False
+        escape_next = False
+        for i, ch in enumerate(raw[start:], start):
+            if escape_next:
+                escape_next = False
+                continue
+            if ch == "\\" and in_string:
+                escape_next = True
+                continue
+            if ch == '"':
+                in_string = not in_string
+                continue
+            if in_string:
+                continue
+            if ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth == 0:
+                    candidate = raw[start:i+1]
+                    try:
+                        return json.loads(candidate)
+                    except json.JSONDecodeError:
+                        break  # nếu không parse được thì thử strategy 4
+
+    # Strategy 4: greedy regex — lấy từ { đầu đến } cuối
     match = re.search(r"\{.*\}", raw, re.DOTALL)
     if match:
         try:
@@ -47,7 +80,7 @@ def extract_json(raw: str) -> dict:
 
     raise ValueError(
         f"Không parse được JSON từ response Claude.\n"
-        f"Raw (300 chars):\n{raw[:300]}"
+        f"Raw ({len(raw)} chars, hiện 500 đầu):\n{raw[:500]}"
     )
 
 

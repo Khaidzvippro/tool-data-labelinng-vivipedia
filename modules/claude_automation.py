@@ -12,58 +12,123 @@ _ASSISTANT_SELECTORS = [
     '.font-claude-message',
 ]
 
-# JS để lấy text của assistant message cuối — chạy trong browser context
+# JS lấy text response cuối của Claude
 _JS_GET_LAST_RESPONSE = """
 () => {
-    // 1. Thử lấy từ block code JSON cuối cùng (chuẩn nhất cho data RAG)
-    const jsonCodes = Array.from(document.querySelectorAll('code.language-json, [aria-label="json code"] code'));
+    // 1. Thử lấy từ block code JSON cuối cùng
+    const jsonCodes = Array.from(document.querySelectorAll(
+        'code.language-json, [aria-label="json code"] code'
+    ));
     if (jsonCodes.length > 0) {
         return jsonCodes[jsonCodes.length - 1].textContent;
     }
 
-    // 2. Thử dùng selector chuẩn của tin nhắn assistant
-    const assistantMsgs = Array.from(document.querySelectorAll('[data-message-author-role="assistant"], .font-claude-message'));
+    // 2. Selector chuẩn assistant message
+    const assistantMsgs = Array.from(document.querySelectorAll(
+        '[data-message-author-role="assistant"], .font-claude-message'
+    ));
     if (assistantMsgs.length > 0) {
         const lastMsg = assistantMsgs[assistantMsgs.length - 1];
         const prose = lastMsg.querySelector('.prose');
         return prose ? prose.innerText : lastMsg.innerText;
     }
-    
-    // 3. Fallback: Tìm tất cả các thẻ .prose trên trang
+
+    // 3. Fallback .prose
     const proses = Array.from(document.querySelectorAll('.prose'));
     if (proses.length > 0) {
         return proses[proses.length - 1].innerText;
     }
-    
+
     return "";
 }
 """
 
+# JS kiểm tra Claude đang stream hay đã xong
+# Trả về true nếu CÒN đang generate (nút Stop hiện hoặc spinner hiện)
+_JS_IS_GENERATING = """
+() => {
+    // Nút stop/interrupt thường có aria-label "Stop" hoặc data-testid chứa "stop"
+    const stopBtn = document.querySelector(
+        'button[aria-label="Stop"], button[data-testid*="stop"], button[data-value="stop"]'
+    );
+    if (stopBtn) return true;
 
-def _wait_response(page, timeout: int = 120, log_fn=print) -> str:
-    """Chờ Claude stream xong bằng cách đợi thời gian tĩnh + trích xuất text cuối."""
-    log_fn(f"  Bắt đầu đợi {timeout}s cho Claude suy nghĩ...")
-    
-    # Đợi tĩnh hoàn toàn (không phụ thuộc vào DOM)
-    # timeout = 20s cho lệnh ngắn, 90s cho lệnh dài
-    time.sleep(timeout)
-    log_fn("  Hết thời gian đợi, bắt đầu hút chữ về...")
+    // Spinner hoặc loading indicator
+    const spinner = document.querySelector(
+        '[data-testid="streaming-indicator"], .loading-spinner, [aria-label*="loading"]'
+    );
+    if (spinner) return true;
 
-    # Lấy text qua JS
-    try:
-        text = page.evaluate(_JS_GET_LAST_RESPONSE)
-        if text and len(text.strip()) > 10:
-            return text.strip()
-    except Exception as e:
-        log_fn(f"  JS eval lỗi: {e}")
+    // Kiểm tra class animate trên assistant message cuối (cursor nhấp nháy)
+    const msgs = Array.from(document.querySelectorAll('[data-message-author-role="assistant"]'));
+    if (msgs.length > 0) {
+        const last = msgs[msgs.length - 1];
+        if (last.querySelector('.animate-pulse, .cursor-blink')) return true;
+    }
 
-    # Fallback cuối cùng
+    return false;
+}
+"""
+
+
+def _wait_response(page, timeout: int = 300, log_fn=print) -> str:
+    """
+    Chờ Claude stream xong bằng polling — không đợi tĩnh.
+    - Poll mỗi 3s xem Claude còn generating không
+    - Nếu text không thay đổi 3 lần liên tiếp → coi như xong
+    - Hard timeout: mặc định 300s (5 phút) để cover cả việc browse nhiều URL
+    """
+    log_fn(f"  Đang đợi Claude stream xong (timeout {timeout}s)...")
+
+    deadline    = time.time() + timeout
+    last_text   = ""
+    stable_count = 0
+    STABLE_NEEDED = 4   # số lần liên tiếp text không đổi → xong
+    POLL_INTERVAL = 3   # giây giữa mỗi lần check
+
+    while time.time() < deadline:
+        time.sleep(POLL_INTERVAL)
+
+        # Lấy text hiện tại
+        try:
+            current = page.evaluate(_JS_GET_LAST_RESPONSE) or ""
+            current = current.strip()
+        except Exception:
+            current = ""
+
+        # Kiểm tra còn generating không
+        try:
+            still_generating = page.evaluate(_JS_IS_GENERATING)
+        except Exception:
+            still_generating = False
+
+        if still_generating:
+            # Còn streaming — reset stable counter, log progress
+            if len(current) != len(last_text):
+                log_fn(f"  Đang stream... ({len(current)} ký tự)")
+            stable_count = 0
+            last_text = current
+            continue
+
+        # Không còn generating — kiểm tra text có ổn định không
+        if current == last_text and len(current) > 50:
+            stable_count += 1
+            if stable_count >= STABLE_NEEDED:
+                elapsed = int(time.time() - (deadline - timeout))
+                log_fn(f"  Claude xong sau ~{elapsed}s — {len(current)} ký tự")
+                return current
+        else:
+            stable_count = 0
+
+        last_text = current
+
+    # Hard timeout — lấy bất cứ thứ gì đang có
+    log_fn(f"  ⚠ Timeout {timeout}s — lấy text hiện tại ({len(last_text)} ký tự)")
     try:
         page.screenshot(path=os.path.abspath("debug_screenshot.png"), full_page=True)
     except Exception:
         pass
-
-    return ""
+    return last_text
 
 
 
@@ -104,31 +169,64 @@ def _click_send(page, log_fn=print):
 
 
 def _send_text(page, text: str, log_fn=print):
-    """Gửi text vào input box Claude bằng insert_text (tốt nhất cho React/Prosemirror)."""
+    """
+    Gửi text vào input box Claude qua clipboard (Ctrl+V).
+    Dùng clipboard thật để Claude.ai parse được URL trong text và trigger web fetch.
+    insert_text() không trigger URL detection của Claude UI.
+    """
+    import subprocess, sys
+
     inp = _get_input_box(page)
     inp.click()
-    time.sleep(0.2)
+    time.sleep(0.3)
 
-    # Ctrl+A để xóa text cũ (nếu có)
+    # Xóa nội dung cũ
     page.keyboard.press("Control+a")
     time.sleep(0.1)
     page.keyboard.press("Backspace")
     time.sleep(0.1)
 
-    # Insert text trực tiếp qua CDP dispatch
-    page.keyboard.insert_text(text)
-    time.sleep(0.5)
-    
-    # RẤT QUAN TRỌNG: Gõ thêm 1 dấu cách bằng phím thật để ép React nhận diện có chữ
-    # Nếu không gõ phím thật, nút Send trông có màu nhưng bấm vào sẽ không chạy!
+    # Đưa text vào clipboard qua PowerShell (không cần thư viện ngoài)
+    _set_clipboard(text)
+    time.sleep(0.3)
+
+    # Paste vào input box
+    page.keyboard.press("Control+v")
+    time.sleep(1.5)  # Đợi Claude.ai parse URL và trigger web fetch indicator
+
+    # Gõ thêm space để React nhận diện có text (bắt buộc)
     page.keyboard.press("Space")
     time.sleep(0.5)
 
-    # Lấy text check thử
     current = page.evaluate(
         "() => document.querySelector('[contenteditable=\"true\"]')?.innerText || ''"
     )
-    log_fn(f"  Đã insert {len(text)} chars (DOM text len: {len(current.strip())})")
+    log_fn(f"  Đã paste {len(text)} chars (DOM text len: {len(current.strip())})")
+
+
+def _set_clipboard(text: str):
+    """
+    Đưa text vào clipboard Windows qua PowerShell với encoding UTF-8.
+    Dùng utf-8-sig (UTF-8 BOM) để PowerShell 5.1 đọc đúng tiếng Việt.
+    """
+    import subprocess, tempfile, os
+    # Ghi file với UTF-8 BOM — PowerShell 5.1 mặc định đọc UTF-16, BOM giúp nó detect UTF-8
+    tmp_path = tempfile.mktemp(suffix=".txt")
+    with open(tmp_path, "w", encoding="utf-8-sig") as f:
+        f.write(text)
+    try:
+        # -Encoding utf8 để đọc đúng, -Raw để giữ newline
+        cmd = f"[System.IO.File]::ReadAllText('{tmp_path}', [System.Text.Encoding]::UTF8) | Set-Clipboard"
+        subprocess.run(
+            ["powershell", "-Command", cmd],
+            capture_output=True,
+            timeout=15,
+        )
+    finally:
+        try:
+            os.unlink(tmp_path)
+        except Exception:
+            pass
 
 
 
@@ -185,16 +283,18 @@ def run_annotation(system_prompt: str, article_prompt: str, log_fn=print) -> str
         _send_text(claude_page, system_prompt, log_fn)
         _click_send(claude_page, log_fn)
 
-        r1 = _wait_response(claude_page, timeout=15, log_fn=log_fn)
-        log_fn(f"Claude confirm: {r1[:100]}...")
+        # Đợi Claude ack system prompt — thường 10-20s
+        r1 = _wait_response(claude_page, timeout=60, log_fn=log_fn)
+        log_fn(f"Claude confirm: {r1[:80]}...")
 
         # === STEP 2: Article prompt ===
         log_fn("Gửi dữ liệu bài viết...")
         _send_text(claude_page, article_prompt, log_fn)
         _click_send(claude_page, log_fn)
 
-        log_fn("Chờ Claude xử lý (khoảng 90s)...")
-        response = _wait_response(claude_page, timeout=90, log_fn=log_fn)
+        # Timeout dài vì Claude phải browse nhiều URL trước khi trả JSON
+        log_fn("Chờ Claude xử lý + browse URL...")
+        response = _wait_response(claude_page, timeout=300, log_fn=log_fn)
 
         # Không đóng browser — Chrome thật vẫn chạy
         return response
