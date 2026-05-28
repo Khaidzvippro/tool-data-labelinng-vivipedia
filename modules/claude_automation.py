@@ -43,6 +43,30 @@ _JS_GET_LAST_RESPONSE = """
 }
 """
 
+# JS lấy bất kỳ text nào từ Claude — dùng khi chờ ack system prompt (không cần JSON)
+_JS_GET_ANY_RESPONSE = """
+() => {
+    // Thử tất cả selector có thể có text của Claude
+    const selectors = [
+        '[data-message-author-role="assistant"]',
+        '.font-claude-message',
+        '[data-testid="assistant-message"]',
+        '.prose',
+        '[class*="claude-message"]',
+        '[class*="assistant"]',
+    ];
+    for (const sel of selectors) {
+        const els = Array.from(document.querySelectorAll(sel));
+        if (els.length > 0) {
+            const last = els[els.length - 1];
+            const text = last.innerText || last.textContent || '';
+            if (text.trim().length > 5) return text.trim();
+        }
+    }
+    return "";
+}
+"""
+
 # JS kiểm tra Claude đang stream hay đã xong
 # Trả về true nếu CÒN đang generate (nút Stop hiện hoặc spinner hiện)
 _JS_IS_GENERATING = """
@@ -71,49 +95,54 @@ _JS_IS_GENERATING = """
 """
 
 
-def _wait_response(page, timeout: int = 300, log_fn=print) -> str:
+def _wait_response(page, timeout: int = 300, log_fn=print,
+                   ack_mode: bool = False) -> str:
     """
-    Chờ Claude stream xong bằng polling — không đợi tĩnh.
-    - Poll mỗi 3s xem Claude còn generating không
-    - Nếu text không thay đổi 3 lần liên tiếp → coi như xong
-    - Hard timeout: mặc định 300s (5 phút) để cover cả việc browse nhiều URL
-    """
-    log_fn(f"  Đang đợi Claude stream xong (timeout {timeout}s)...")
+    Chờ Claude stream xong bằng polling.
 
-    deadline    = time.time() + timeout
-    last_text   = ""
+    ack_mode=True  — chờ system prompt ack: timeout ngắn, lấy bất kỳ text nào,
+                     stable 2 lần là đủ (Claude chỉ trả 1-2 câu xác nhận).
+    ack_mode=False — chờ article response: timeout dài, lấy JSON code block,
+                     stable 4 lần để chắc chắn stream xong.
+    """
+    label = "ack system prompt" if ack_mode else "article response"
+    log_fn(f"  Chờ Claude {label} (timeout {timeout}s)...")
+
+    get_js       = _JS_GET_ANY_RESPONSE if ack_mode else _JS_GET_LAST_RESPONSE
+    stable_need  = 2 if ack_mode else 4
+    min_len      = 3 if ack_mode else 50
+    poll         = 2 if ack_mode else 3
+
+    deadline     = time.time() + timeout
+    last_text    = ""
     stable_count = 0
-    STABLE_NEEDED = 4   # số lần liên tiếp text không đổi → xong
-    POLL_INTERVAL = 3   # giây giữa mỗi lần check
+
+    # Đợi 1 chút để Claude bắt đầu render
+    time.sleep(2 if ack_mode else poll)
 
     while time.time() < deadline:
-        time.sleep(POLL_INTERVAL)
-
-        # Lấy text hiện tại
         try:
-            current = page.evaluate(_JS_GET_LAST_RESPONSE) or ""
+            current = page.evaluate(get_js) or ""
             current = current.strip()
         except Exception:
             current = ""
 
-        # Kiểm tra còn generating không
         try:
             still_generating = page.evaluate(_JS_IS_GENERATING)
         except Exception:
             still_generating = False
 
         if still_generating:
-            # Còn streaming — reset stable counter, log progress
             if len(current) != len(last_text):
                 log_fn(f"  Đang stream... ({len(current)} ký tự)")
             stable_count = 0
-            last_text = current
+            last_text    = current
+            time.sleep(poll)
             continue
 
-        # Không còn generating — kiểm tra text có ổn định không
-        if current == last_text and len(current) > 50:
+        if current == last_text and len(current) >= min_len:
             stable_count += 1
-            if stable_count >= STABLE_NEEDED:
+            if stable_count >= stable_need:
                 elapsed = int(time.time() - (deadline - timeout))
                 log_fn(f"  Claude xong sau ~{elapsed}s — {len(current)} ký tự")
                 return current
@@ -121,6 +150,7 @@ def _wait_response(page, timeout: int = 300, log_fn=print) -> str:
             stable_count = 0
 
         last_text = current
+        time.sleep(poll)
 
     # Hard timeout — lấy bất cứ thứ gì đang có
     log_fn(f"  ⚠ Timeout {timeout}s — lấy text hiện tại ({len(last_text)} ký tự)")
@@ -283,9 +313,9 @@ def run_annotation(system_prompt: str, article_prompt: str, log_fn=print) -> str
         _send_text(claude_page, system_prompt, log_fn)
         _click_send(claude_page, log_fn)
 
-        # Đợi Claude ack system prompt — thường 10-20s
-        r1 = _wait_response(claude_page, timeout=60, log_fn=log_fn)
-        log_fn(f"Claude confirm: {r1[:80]}...")
+        # Đợi Claude ack — thường 10-20s, dùng ack_mode để lấy text thường (không cần JSON)
+        r1 = _wait_response(claude_page, timeout=90, log_fn=log_fn, ack_mode=True)
+        log_fn(f"Claude confirm: {r1[:100] if r1 else '(không lấy được text — tiếp tục)'}")
 
         # === STEP 2: Article prompt ===
         log_fn("Gửi dữ liệu bài viết...")
@@ -294,7 +324,7 @@ def run_annotation(system_prompt: str, article_prompt: str, log_fn=print) -> str
 
         # Timeout dài vì Claude phải browse nhiều URL trước khi trả JSON
         log_fn("Chờ Claude xử lý + browse URL...")
-        response = _wait_response(claude_page, timeout=300, log_fn=log_fn)
+        response = _wait_response(claude_page, timeout=300, log_fn=log_fn, ack_mode=False)
 
         # Không đóng browser — Chrome thật vẫn chạy
         return response
